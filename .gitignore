@@ -1,0 +1,26 @@
+# Local agent/runtime guidance and private study notes
+AGENTS.md
+docs/
+.omx/
+
+# Python-generated files
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Local environments and editor state
+.venv/
+venv/
+.idea/
+.vscode/
+.DS_Store
+
+# Personal ledger data and generated exports
+data/*
+!data/.gitkeep
+exports/
+*.log
+
