@@ -19,8 +19,8 @@ venv/
 .DS_Store
 
 # Personal ledger data and generated exports
-data/*
 !data/.gitkeep
 exports/
 *.log
 
+temp*

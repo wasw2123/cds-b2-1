@@ -1,6 +1,7 @@
-def main():
-    print("Hello from cds-b2-1!")
+
+
+from budget_app.cli import main
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

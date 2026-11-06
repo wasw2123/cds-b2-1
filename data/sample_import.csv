@@ -1,0 +1,4 @@
+date,type,category,amount,memo,tags
+2026-11-06,expense,transport,15000,택시비,"taxi,night"
+2026-11-06,expense,cafe,4500,에스프레소,coffee
+2026-11-06,expense,food,12000,국밥,"meal,lunch"

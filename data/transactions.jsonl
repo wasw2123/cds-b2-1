@@ -1,0 +1,15 @@
+{"id": "TX-000001", "type": "income", "date": "2026-10-10", "amount": 3200000, "category": "salary", "memo": "10월 정기 급여", "tags": ["work", "monthly"]}
+{"id": "TX-000002", "type": "expense", "date": "2026-10-12", "amount": 450000, "category": "rent", "memo": "10월 월세 및 관리비", "tags": ["home", "fixed"]}
+{"id": "TX-000003", "type": "expense", "date": "2026-10-15", "amount": 14000, "category": "food", "memo": "점심 김치찌개", "tags": ["meal", "lunch"]}
+{"id": "TX-000004", "type": "expense", "date": "2026-10-18", "amount": 6500, "category": "cafe", "memo": "아이스 아메리카노", "tags": ["coffee", "study"]}
+{"id": "TX-000005", "type": "expense", "date": "2026-10-22", "amount": 55000, "category": "transport", "memo": "기후동행카드 충전", "tags": ["subway", "bus"]}
+{"id": "TX-000006", "type": "expense", "date": "2026-10-25", "amount": 38000, "category": "food", "memo": "저녁 삼겹살 모임", "tags": ["meal", "dinner", "friend"]}
+{"id": "TX-000007", "type": "expense", "date": "2026-10-28", "amount": 89000, "category": "shopping", "memo": "가을 자켓 구매", "tags": ["clothes"]}
+{"id": "TX-000008", "type": "income", "date": "2026-11-01", "amount": 3200000, "category": "salary", "memo": "11월 정기 급여", "tags": ["work", "monthly"]}
+{"id": "TX-000009", "type": "income", "date": "2026-11-02", "amount": 150000, "category": "etc", "memo": "중고 거래 판매 수익", "tags": ["side", "bonus"]}
+{"id": "TX-000010", "type": "expense", "date": "2026-11-02", "amount": 450000, "category": "rent", "memo": "11월 월세 및 관리비", "tags": ["home", "fixed"]}
+{"id": "TX-000011", "type": "expense", "date": "2026-11-03", "amount": 16000, "category": "food", "memo": "점심 돈까스", "tags": ["meal", "lunch"]}
+{"id": "TX-000012", "type": "expense", "date": "2026-11-04", "amount": 5800, "category": "cafe", "memo": "카페라떼", "tags": ["coffee"]}
+{"id": "TX-000013", "type": "expense", "date": "2026-11-05", "amount": 120000, "category": "shopping", "memo": "무선 키보드 구매", "tags": ["gear", "study"]}
+{"id": "TX-000014", "type": "expense", "date": "2026-11-05", "amount": 30000, "category": "culture", "memo": "주말 영화 관람 및 팝콘", "tags": ["movie", "friend"]}
+{"id": "TX-000015", "type": "expense", "date": "2026-11-06", "amount": 42000, "category": "food", "memo": "저녁 치킨 배달", "tags": ["meal", "dinner", "friend"]}

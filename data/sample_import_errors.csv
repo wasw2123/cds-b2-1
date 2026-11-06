@@ -1,0 +1,6 @@
+date,type,category,amount,memo,tags
+2026-11-08,expense,food,12000,정상 행 - 점심 설렁탕,"meal, lunch"
+2026-13-99,expense,food,15000,실패 행 1 - 잘못된 날짜 형식,"meal"
+2026-11-08,expense,unknown_cat,8000,실패 행 2 - 미등록 카테고리,"etc"
+2026-11-08,expense,cafe,-4500,실패 행 3 - 음수 금액,"coffee"
+2026-11-08,invalid_type,food,9000,실패 행 4 - 잘못된 거래 타입,"meal"
