@@ -47,7 +47,7 @@ budget_app/
 ├── models.py         # 불변 데이터 모델 (@dataclass(frozen=True): Transaction, Budget)
 ├── repositories.py   # JSONL 파일 I/O, yield 제너레이터 스트리밍 읽기, 원자적 파일 쓰기
 ├── services.py       # 비즈니스 로직 (CRUD, 조건 검색, 월별 요약, 예산 비교, CSV 입출력)
-├── decorators.py     # 공통 관심사 데코레이터 (@handle_errors: 예외 출력 및 종료 코드 제어)
+├── decorators.py     # 공통 관심사 데코레이터 분리 (@handle_errors: 예외 처리, @timer: 실행 시간 측정, @logger: 실행 로깅)
 └── cli.py            # argparse 명령어 파싱, 대화형 입력, 콘솔 출력 포맷팅
 ```
 
@@ -599,3 +599,55 @@ python -m budget_app list
 ```text
 [오류] json을 로드를 실패하였습니다.
 ```
+
+---
+
+## 7. 대용량(100k건 수준) 병목 지점 식별 및 구체적 개선 계획
+
+거래 데이터가 **100,000건(100k) 이상**으로 증가하는 대용량 환경에서 `@timer`(`time.perf_counter()`) 및 프로파일러(`cProfile`, `tracemalloc`)로 측정 시 예상되는 **주요 병목 지점(Profiling Points)**과 이를 해결하기 위한 **메모리(Memory) / 디스크 I/O / CPU 관점별 구체적 개선 방안**입니다.
+
+---
+
+### 7.1 100k 수준에서의 핵심 프로파일링 포인트 (병목 지점 식별)
+
+| 순위 | 병목 지점 (모듈 및 메서드) | 원인 분석 | 시간 / 공간 복잡도 |
+| :---: | :--- | :--- | :---: |
+| **1** | `BudgetService.list_transactions()` (`services.py:77`) | `sorted(self.transaction_repo.iter_all(), ...)` 호출 시 제너레이터 스트림이 전체 리스트로 구체화(Materialization)되면서 100k 객체가 한꺼번에 메모리에 적재되고 전체 정렬 수행 | 시간 `O(N log N)` / 메모리 `O(N)` |
+| **2** | `TransactionRepository.next_id()` (`repositories.py:107`) | 거래 1건 추가(`add`) 시마다 마지막 ID 번호를 계산하기 위해 100k 줄 전체를 처음부터 끝까지 읽고 `json.loads()`를 수행하는 풀 스캔(Full Scan) 발생 | 시간 `O(N)` (1건 추가당) |
+| **3** | `BudgetService.import_csv()` (`services.py:252`) | 대량 CSV 가져오기 시 매 행마다 `category_repo.exists()`(파일 읽기) + `next_id()`(100k 스캔) + `append_jsonl()`(파일 `open`/`close` 반복)이 중첩 호출됨 | 시간 `O(N²)` / 과도한 디스크 I/O |
+| **4** | `TransactionRepository.update()` / `delete()` (`repositories.py:113, 124`) | 수정·삭제 시 리스트 컴프리헨션(`[item.to_dict() for item in self.iter_all() ...]`)으로 100k 전체를 메모리에 적재한 뒤 `.tmp` 파일에 기록 | 시간 `O(N)` / 메모리 `O(N)` |
+
+---
+
+### 7.2 영역별(메모리 / 디스크 I/O / CPU) 구체적 개선 계획
+
+#### ① 메모리(Memory) 최적화 계획: **역순 읽기(Reverse Reading) 및 완전 스트리밍화**
+1. **파일 역순 읽기(Reverse Block Reading) 및 Top-K 힙(`heapq.nlargest`) 도입**:
+   - **문제**: `list --limit 10`처럼 최신 10건만 필요할 때도 `sorted()`가 100k 건을 모두 메모리에 올립니다.
+   - **개선**:
+     - 거래가 시간순으로 쌓이는 경우에는 파일 포인터를 끝으로 이동(`os.seek(0, os.SEEK_END)`)하여 블록(예: `8KB`) 단위로 **역순 읽기(Reverse Reading)**를 수행하면 `limit` 건수만큼만 읽고 즉시 종료할 수 있어 메모리와 시간을 모두 **`O(K)` (`K = limit`)**로 줄일 수 있습니다.
+     - 과거 날짜 입력으로 순서가 섞여 있는 경우에도 전체 `sorted()` 대신 파이썬 표준 라이브러리 **`heapq.nlargest(limit, self.transaction_repo.iter_all(), key=...)`**를 사용하면 메모리에 최대 `K`개의 요소만 유지하므로 메모리 사용량이 **`O(N)` → `O(K)`**로 대폭 감소합니다.
+2. **`update` / `delete` 시 제너레이터 표현식(Generator Expression) 적용**:
+   - **문제**: `repositories.py`의 `update()`와 `delete()`에서 대괄호 리스트 컴프리헨션(`[item.to_dict() ...]`)을 사용하여 100k 건을 메모리에 복사합니다.
+   - **개선**: 대괄호 `[...]` 대신 소괄호 **제너레이터 표현식(`(item.to_dict() for item in self.iter_all() if item.id != tx_id)`)**으로 바꿔 `write_all_jsonl()`에 전달하면, `.tmp` 임시 파일로 복사하는 동안에도 메모리에 단 1건씩만 올라가는 **`O(1)` 메모리 스트리밍**이 유지됩니다.
+
+#### ② 디스크 I/O 최적화 계획: **배치 쓰기(Batch Writing) 및 월별 파일 파티셔닝**
+1. **배치 쓰기(Batch Write) 도입**:
+   - **문제**: `import_csv()`에서 100k 건을 등록할 때 `append_jsonl()`이 10만 번 호출되어 파일 `open()` / `write()` / `close()` 시스템 콜이 10만 회 발생합니다.
+   - **개선**: `TransactionRepository.add_batch(transactions: Iterable[Transaction])` 메서드를 추가하여 단일 `with path.open("a", encoding="utf-8") as f:` 블록 안에서 일정 크기(예: `5,000`건 단위 버퍼)로 묶어 **`f.writelines()` 배치 쓰기**를 수행하면 디스크 I/O 오버헤드를 수십 배 이상 단축할 수 있습니다.
+2. **월별 파일 파티셔닝(Monthly File Partitioning)**:
+   - **문제**: 단일 `transactions.jsonl` 파일에 100k 건이 누적되면 특정 달 요약(`summary --month 2026-11`) 시에도 모든 연도의 데이터를 읽어야 합니다.
+   - **개선**: 저장 파일을 `data/transactions_2026-10.jsonl`, `data/transactions_2026-11.jsonl` 형태로 연-월 단위 분할(Partitioning)하면 월별 요약 및 기간 검색 시 해당 월 파일만 열면 되므로 디스크 읽기 I/O가 **`1/개월수`**로 줄어듭니다.
+
+#### ③ CPU 및 탐색 최적화 계획: **인덱싱(Indexing) 및 메타데이터 캐싱**
+1. **인덱싱(Indexing) 구조 도입 (`tx_id` 및 `month` 오프셋 인덱스)**:
+   - **문제**: `get_by_id()`, `update()`, `delete()`, `search()` 실행 시 매번 100k 줄 전체에 대해 문자열 파싱(`json.loads()`)을 수행하여 CPU 연산 비용이 가장 크게 발생합니다.
+   - **개선**:
+     - `tx_id -> 파일 내 바이트 위치(byte offset)`를 매핑한 경량 인덱스 파일(`transactions.idx` 또는 표준 라이브러리 `sqlite3` 인덱스)을 유지합니다.
+     - 특정 ID 조회 시 전체 파일을 파싱하지 않고 **`f.seek(byte_offset)`**으로 해당 줄만 읽어 `json.loads()`를 딱 1번만 수행하므로 탐색 및 CPU 파싱 비용이 **`O(N)` → `O(1)`**로 개선됩니다.
+2. **ID 채번(`next_id`) 메타데이터 분리 및 역순 1줄 조회**:
+   - **문제**: `next_id()`가 매번 100k 건을 전수 순회합니다.
+   - **개선**: 마지막으로 발급된 번호(`last_seq`)를 `meta.json`에 기록해 두거나 파일의 맨 마지막 줄 1개만 역순으로 읽어 채번하면 `next_id()`의 CPU/IO 비용이 **`O(N)` → `O(1)`**로 즉시 제거됩니다.
+3. **카테고리 목록 인메모리 해시 셋(`set`) 캐싱**:
+   - **문제**: 거래 추가 및 `import_csv()` 반복 검증 시마다 `categories.jsonl` 파일을 반복해서 읽고 리스트 탐색(`O(M)`)을 수행합니다.
+   - **개선**: `CategoryRepository`에서 카테고리 목록을 메모리 `set[str]`에 캐싱하고 카테고리 추가/삭제 시에만 갱신하도록 변경하면, 대량 검증 시 디스크 I/O가 사라지고 존재 여부 검사가 **`O(1)` 해시 조회**로 빨라집니다.

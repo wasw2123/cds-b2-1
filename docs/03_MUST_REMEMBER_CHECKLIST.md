@@ -90,3 +90,24 @@
 - `tags`에 `"meal, lunch"`처럼 쉼표가 포함되어 있어도 표준 `csv.DictWriter`와 `csv.DictReader`를 사용하면 자동으로 큰따옴표(`"meal, lunch"`)로 감싸고 해독해 주어 컬럼이 밀리지 않습니다.
 
 ---
+
+## 3. 대용량(100k건 수준) 프로파일링 포인트(병목 지점) 및 개선 계획
+
+10만 건(100k) 이상의 데이터를 처리할 때 현재 구조에서 발생하는 **4대 병목 지점**과 **메모리 / 디스크 I/O / CPU별 구체적 개선 방안**입니다.
+
+### 3.1 100k 수준 프로파일링 병목 지점
+1. **`list_transactions()`의 `sorted()` (`services.py:77`)**: `sorted(self.transaction_repo.iter_all(), ...)`가 제너레이터 스트림을 깨고 100k 전체를 메모리 리스트로 적재(`O(N)` 메모리, `O(N log N)` CPU)
+2. **`next_id()`의 전체 스캔 (`repositories.py:107`)**: 1건 추가(`add`) 시마다 마지막 ID를 찾기 위해 100k 줄 전체를 읽고 `json.loads()` 수행(`O(N)`)
+3. **`import_csv()`의 건별 반복 I/O (`services.py:252`)**: 행마다 `category_repo.exists()` + `next_id()` + `append_jsonl()`이 반복 호출되어 `O(N²)` 시간 및 10만 회 파일 `open/close` 발생
+4. **`update()` / `delete()`의 리스트 컴프리헨션 (`repositories.py:113, 124`)**: `[item.to_dict() for item in self.iter_all() ...]`가 100k 전체를 메모리에 적재한 뒤 `.tmp` 파일에 기록
+
+### 3.2 메모리 / 디스크 I/O / CPU별 구체적 개선 방안
+- **메모리(Memory) 개선 — 역순 읽기(Reverse Reading) & `heapq.nlargest`**:
+  - `list --limit N` 실행 시 파일 끝(`os.seek(0, os.SEEK_END)`)에서부터 블록 단위로 **역순 읽기**를 수행하거나, **`heapq.nlargest(limit, iter_all())`**를 사용하여 메모리 사용량을 `O(N)`에서 **`O(K)` (`K = limit`)**로 절감
+  - `update`/`delete` 시 리스트 컴프리헨션(`[...]`) 대신 **제너레이터 표현식(`(...)`)**을 `write_all_jsonl()`에 전달하여 `O(1)` 스트리밍 유지
+- **디스크 I/O 개선 — 배치 쓰기(Batch Writing) & 월별 파티셔닝**:
+  - `import_csv()`에서 건별 `append_jsonl()` 대신 버퍼(예: `5,000`건 단위)를 모아 단일 파일 핸들에서 **`f.writelines()` 배치 쓰기**를 수행하여 파일 I/O 시스템 콜을 10만 회 → 수십 회로 축소
+  - 단일 `transactions.jsonl` 대신 `transactions_YYYY-MM.jsonl`로 **월별 파일 분할(Partitioning)** 적용
+- **CPU 및 탐색 개선 — 인덱싱(Indexing) & 캐싱**:
+  - `tx_id -> byte_offset`을 매핑한 **오프셋 인덱스(`transactions.idx`)**를 구축하고 `f.seek(offset)`으로 즉시 점프하여 100k 전체 `json.loads()` 파싱 비용을 **`O(N)` → `O(1)`**로 제거
+  - 마지막 발급 ID를 `meta.json` 또는 파일 마지막 1줄 역순 읽기로 조회해 `next_id()`를 **`O(1)`**화하고, 카테고리는 인메모리 `set[str]`에 캐싱하여 검증 속도를 **`O(1)`**로 최적화
