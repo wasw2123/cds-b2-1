@@ -8,9 +8,10 @@
 
 과제 제출 후 코드 리뷰나 발표에서 **"왜 이렇게 설계했나요?"**라는 질문을 받았을 때 아래 내용으로 답하면 완벽합니다.
 
-### Q1. 파일 기반 영구 저장을 어떻게 설계했고, 수정/삭제 시 데이터 안전성은 어떻게 지켰나요?
+### Q1. 파일 기반 영구 저장을 어떻게 설계했고, 수정/삭제 및 CSV 임포트 시 데이터 안전성은 어떻게 지켰나요?
 - **저장 포맷 분리**: 한 줄에 하나의 JSON 객체를 저장하는 **JSONL(`.jsonl`)** 포맷을 선택하고, 책임에 따라 `transactions.jsonl`, `categories.jsonl`, `budgets.jsonl` 3개 파일로 분리했습니다.
 - **원자적 파일 교체 (Atomic Replace)**: `repositories.py`의 `write_all_jsonl()`에서 원본 파일을 직접 `"w"` 모드로 열지 않습니다. 원본을 바로 열면 쓰기 도중 예외 발생 시 파일이 0바이트로 날아가기 때문에, 같은 디렉토리에 **`.tmp` 임시 파일(`transactions.jsonl.tmp`)**을 먼저 만들어 끝까지 기록한 뒤 `tmp_path.replace(path)`로 **원자적(Atomic) 교체**를 수행했습니다.
+- **CSV 임포트 스냅샷 롤백 및 상세 오류 리포트 (`services.py:265`)**: `import_csv()` 실행 전 기존 거래 스냅샷(`snapshot`)을 백업해 두어, 파일 손상(`csv.Error`, `UnicodeDecodeError`)이나 엄격 모드(`--rollback-on-error`)에서 오류 행이 발견되면 `write_all_jsonl()`로 즉시 원상복구(Rollback)합니다. 부분 임포트 시에는 건너뛴 행 번호(`enumerate(reader, start=2)`)와 실패 원인을 `errors` 리스트로 반환해 `[스킵 이유]`로 상세 보고합니다.
 
 ### Q2. 왜 모델 / 저장소 / 서비스 / CLI 4계층으로 분리했나요?
 - **단일 책임 원칙(SRP)과 의존성 단방향 유지 (`cli -> services -> repositories -> models/validators/errors`)**:
@@ -27,12 +28,12 @@
   3. `services.py`의 `list_transactions()` 및 `search_transactions()`: 조건에 맞는 거래만 `yield tx`로 흘려보냅니다.
 - **필요한 이유**: `f.read()`나 `f.readlines()`로 파일 전체를 리스트에 올리면 데이터가 수십만~수백만 건일 때 메모리 부족(`MemoryError`)이 발생합니다. `yield`를 쓰면 **한 시점에 메모리에 거래 객체 1건만 올라가는 스트리밍 파이프라인**이 만들어집니다.
 
-### Q4. 데코레이터(`@handle_errors`)는 어떤 역할을 하며 왜 분리했나요?
-- **역할**: `cli.py`의 진입 함수인 `main()`을 감싸서 실행 중 발생하는 `BudgetAppError`와 `KeyboardInterrupt`를 한곳에서 잡아냅니다.
-- **장점 (공통 관심사 분리)**:
-  - 각 명령어(`add`, `list`, `update`, `delete` 등)마다 `try ... except` 블록을 중복 작성할 필요가 없습니다.
-  - 사용자에게 파이썬 스택트레이스(Traceback)를 노출하지 않고 `[오류]`와 `[힌트]` 형식으로 일관되게 출력한 뒤, 비정상 종료 코드 `1`(정상 종료 시 `0`)을 반환하도록 강제합니다.
-  - `@functools.wraps(func)`를 사용해 원본 함수의 메타데이터(`__name__`, `__doc__`)를 보존했습니다.
+### Q4. 데코레이터(`@handle_errors`, `@timer`, `@logger`)는 각각 어떤 역할을 하며 왜 분리했나요?
+- **3대 공통 관심사(Cross-cutting Concerns) 분리 (`decorators.py`)**:
+  1. **`@handle_errors`**: `cli.py`의 `main()`을 감싸서 실행 중 발생하는 `BudgetAppError`와 `KeyboardInterrupt`를 한곳에서 잡아 `[오류]`/`[힌트]`를 출력하고 비정상 종료 코드 `1`(정상 `0`)을 반환합니다.
+  2. **`@timer`**: `time.perf_counter()`로 전체 명령 실행 소요 시간(ms)을 측정하여 출력합니다.
+  3. **`@logger`**: `services.py`의 각 비즈니스 메서드를 감싸서 실행 시각, 클래스.메서드명(`func.__qualname__`), 전달 인자(`args[1:], kwargs`), 실행 결과(성공 반환값 또는 `Fail(사유)`)를 `./data/app.log`에 기록합니다.
+- **장점**: 비즈니스 로직 코드를 더럽히지 않고 예외 처리, 성능 측정, 감사 로깅을 독립적으로 붙였다 뗄 수 있으며, `@functools.wraps(func)`와 제네릭 `TypeVar("T")`를 사용해 원본 함수의 메타데이터와 반환 타입 계약을 그대로 보존했습니다.
 
 ### Q5. `@dataclass(frozen=True)`와 타입 힌트(`typing`)를 써서 얻은 이점은 무엇인가요?
 - **명확한 입출력 계약**: 함수 시그니처만 봐도 `str | None`을 받는지, `Iterator[Transaction]`을 반환하는지 명확히 알 수 있어 IDE 자동완성과 정적 타입 검사가 가능해집니다.
@@ -88,6 +89,15 @@
 ### ⑨ CSV 파일 입출력 시 `newline=""`과 태그 쉼표 처리 (`services.py`)
 - `open(..., newline="")`을 지정하지 않으면 Windows 등에서 줄바꿈(`\r\n`)이 두 번 들어가 빈 줄이 생깁니다.
 - `tags`에 `"meal, lunch"`처럼 쉼표가 포함되어 있어도 표준 `csv.DictWriter`와 `csv.DictReader`를 사용하면 자동으로 큰따옴표(`"meal, lunch"`)로 감싸고 해독해 주어 컬럼이 밀리지 않습니다.
+
+### ⑩ `@logger`에서 예외를 삼키지 않고 실패 로그까지 남기는 `try ... except ... finally` (`decorators.py`)
+- `except Exception as e:`에서 `result = f"Fail({e})"`만 하고 `return result`를 해버리면 원래 발생했던 `BudgetAppError`가 삼켜져서 호출부가 문자열을 정상 반환값으로 착각하는 버그가 생깁니다.
+- 반대로 `except` 안에서 바로 `raise`만 하면 함수가 즉시 종료되어 그 아래의 파일 쓰기 코드가 실행되지 않습니다.
+- 따라서 `except`에서는 `raise`로 예외를 그대로 다시 던지고, **로그 파일 쓰기 코드는 무조건 실행되는 `finally:` 블록 안에 배치**해야 성공/실패 모든 경우의 로그가 남으면서도 예외 처리 흐름이 깨지지 않습니다.
+
+### ⑪ CSV 임포트 시 트랜잭션 스냅샷 롤백과 행 번호 추적 (`services.py`)
+- `enumerate(reader, start=2)`를 쓰면 1행(헤더) 다음인 2행부터 정확한 행 번호로 실패 사유(`f"{line_no}행 오류: {e}"`)를 리포트할 수 있습니다.
+- 임포트 시작 전 `snapshot = [tx.to_dict() for tx in self.transaction_repo.iter_all()]`으로 스냅샷을 떠두면, 파일 인코딩/포맷 손상(`csv.Error`, `UnicodeDecodeError`)이나 엄격 모드(`rollback_on_error=True`)에서 오류가 발생했을 때 `write_all_jsonl(self.transaction_repo.path, iter(snapshot))`으로 임포트 이전 상태를 100% 복원할 수 있습니다.
 
 ---
 

@@ -66,6 +66,9 @@ budget_app/
 ### 3.2 주요 저장 정책
 - **초기 카테고리 정책 (안 A 채택)**: `categories.jsonl` 파일이 없거나 비어 있을 때 기본 카테고리 5종(`food`, `transport`, `rent`, `salary`, `etc`)을 자동으로 초기화합니다.
 - **원자적 파일 교체 (Atomic Replace)**: 수정(`update`)이나 삭제(`delete`) 시 원본 파일을 직접 열지 않고 `.tmp` 임시 파일에 먼저 기록한 뒤 `Path.replace()`로 교체하여 예외 상황에서도 데이터 유실을 방지합니다.
+- **CSV 임포트 롤백 정책 및 상세 오류 리포트**:
+  - 임포트 전 기존 거래 내역의 스냅샷(`snapshot`)을 생성하여, 파일 손상(`csv.Error`, `UnicodeDecodeError`)이나 엄격 모드(`--rollback-on-error`)에서 오류 행이 발생하면 즉시 임포트 이전 상태로 **트랜잭션 전체 롤백(Rollback)**을 수행합니다.
+  - 기본 모드(부분 임포트)에서는 정상 행만 반영하고, 건너뛴 행의 번호(`line_no`)와 구체적인 실패 사유를 `[스킵 이유]` 리포트로 출력합니다.
 
 ---
 
@@ -82,7 +85,7 @@ budget_app/
 | **7. 거래 수정 (`update` — 옵션 방식 고정)** | `python -m budget_app update --id ID [--date ...] [--type ...] [--category ...] [--amount ...] [--memo ...] [--tags ...]` |
 | **8. 거래 삭제 (`delete`)** | `python -m budget_app delete --id ID` |
 | **9. CSV 내보내기 (`export`)** | `python -m budget_app export --out FILE.csv [--month YYYY-MM] [--from YYYY-MM-DD] [--to YYYY-MM-DD]` |
-| **10. CSV 가져오기 (`import`)** | `python -m budget_app import --from FILE.csv` |
+| **10. CSV 가져오기 (`import`)** | `python -m budget_app import --from FILE.csv [--rollback-on-error]` |
 
 ---
 
@@ -580,7 +583,7 @@ python -m budget_app import --from ./data/not_found.csv
 [오류] 파일이 존재하지 않습니다.
 ```
 
-**4) 오류 행(날짜 오류, 미등록 카테고리, 음수 금액, 잘못된 타입)이 섞인 CSV `import` 시 `skipped` 처리:**
+**4) 오류 행(날짜 오류, 미등록 카테고리, 음수 금액, 잘못된 타입)이 섞인 CSV `import` 시 상세 실패 리포트(`[스킵 이유]`) 출력:**
 - 테스트 파일: `./data/sample_import_errors.csv` (정상 1건 + 오류 4건)
 
 ```bash
@@ -589,9 +592,23 @@ python -m budget_app import --from ./data/sample_import_errors.csv
 **출력 결과:**
 ```text
 [csv 가져오기 완료] imported=1, skipped=4
+[스킵 이유] 3행 오류: 날짜 형식이 올바르지 않습니다. 2026-12-30 형식으로 입력해주세요.
+[스킵 이유] 4행 오류: 카테고리가 등록돼 있지 않습니다.
+[스킵 이유] 5행 오류: 0보다 큰 양의 정수만 입력해주세요
+[스킵 이유] 6행 오류: income, expense중 입력해주세요.
 ```
 
-**5) 저장된 `.jsonl` 파일이 손상되었을 때 (`json.JSONDecodeError` 방어):**
+**5) 오류 행 발생 시 트랜잭션 전체 롤백(`--rollback-on-error`) 시연:**
+```bash
+python -m budget_app import --from ./data/sample_import_errors.csv --rollback-on-error
+```
+**출력 결과:**
+```text
+[오류] 오류 행(4건)이 발견되어 전체 롤백되었습니다.
+[힌트] 3행 오류: 날짜 형식이 올바르지 않습니다. 2026-12-30 형식으로 입력해주세요. / 4행 오류: 카테고리가 등록돼 있지 않습니다. / 5행 오류: 0보다 큰 양의 정수만 입력해주세요 / 6행 오류: income, expense중 입력해주세요.
+```
+
+**6) 저장된 `.jsonl` 파일이 손상되었을 때 (`json.JSONDecodeError` 방어):**
 ```bash
 python -m budget_app list
 ```
