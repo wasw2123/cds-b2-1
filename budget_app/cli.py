@@ -1,7 +1,7 @@
 
 import argparse
 
-from budget_app.decorators import handle_errors
+from budget_app.decorators import handle_errors, timer
 from budget_app.models import Transaction
 from budget_app.services import BudgetService
 
@@ -66,6 +66,7 @@ def build_parser() -> argparse.ArgumentParser:
 def format_transaction(tx: Transaction) -> str:
     return f"{tx.id} | {tx.date} | {tx.type} | {tx.category} | {tx.amount} | {tx.memo} | {', '.join(tx.tags) if tx.tags else ''}"
 
+@timer
 @handle_errors
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()

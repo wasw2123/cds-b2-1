@@ -6,6 +6,7 @@ import csv
 from pathlib import Path
 from typing import Any, Iterator
 
+from budget_app.decorators import logger
 from budget_app.errors import BudgetAppError
 from budget_app.models import Budget, Transaction
 from budget_app.repositories import BudgetRepository, CategoryRepository, TransactionRepository
@@ -19,13 +20,16 @@ class BudgetService:
         self.budget_repo = BudgetRepository(base_dir / "budgets.jsonl")
         self.transaction_repo = TransactionRepository(base_dir / "transactions.jsonl")
 
+    @logger
     def list_categories(self) -> list[str]:
         return self.category_repo.list_all()
 
+    @logger
     def add_category(self, raw_name: str) -> str:
         name = validate_category_name(raw_name)
         return self.category_repo.add(name)
 
+    @logger
     def remove_category(self, raw_name: str) -> None:
         name = validate_category_name(raw_name)
         for tx in self.transaction_repo.iter_all():
@@ -33,6 +37,7 @@ class BudgetService:
                 raise BudgetAppError(msg="거래내역에서 사용중인 카테고리입니다.")
         self.category_repo.remove(name)
 
+    @logger
     def add_transaction(
         self,
         raw_date: str,
@@ -64,6 +69,7 @@ class BudgetService:
             )
         )
 
+    @logger
     def list_transactions(self, limit: int | None = None) -> Iterator[Transaction]:
         if limit is not None and limit <= 0:
             raise BudgetAppError(msg="1이상의 양의 정수를 입력해 주세요", hint="5")
@@ -73,6 +79,7 @@ class BudgetService:
         for tx in sorted_txs[:limit]:
             yield tx
 
+    @logger
     def delete_transaction(self, tx_id: str) -> None:
         id = tx_id.strip()
         if not id:
@@ -80,6 +87,7 @@ class BudgetService:
         
         self.transaction_repo.delete(id)
 
+    @logger
     def update_transaction(
         self,
         tx_id: str,
@@ -112,6 +120,7 @@ class BudgetService:
 
         return self.transaction_repo.update(updated_tx)
 
+    @logger
     def search_transactions(
             self,
             date_from: str | None = None,
@@ -156,12 +165,14 @@ class BudgetService:
             yield tx
 
 
+    @logger
     def set_budget(self, raw_month: str, raw_amount: str | int) -> Budget:
         return self.budget_repo.set_budget(Budget(
             month=validate_month(raw_month),
             amount=validate_amount(raw_amount),
         ))
 
+    @logger
     def get_monthly_summary(self, raw_month: str, top_n: int = 3) -> dict[str, Any]:
         month = validate_month(raw_month)
         if top_n <= 0:
@@ -207,6 +218,7 @@ class BudgetService:
             "is_exceeded": is_exceeded,
         }
 
+    @logger
     def export_csv(
         self,
         out_file: Path | str,
@@ -249,6 +261,7 @@ class BudgetService:
                 count += 1
         return count
 
+    @logger
     def import_csv(self, from_file: Path | str) -> tuple[int, int]:
         path = Path(from_file)
         if not path.exists():
