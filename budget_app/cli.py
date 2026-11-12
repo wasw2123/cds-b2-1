@@ -60,6 +60,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     import_parser = subparsers.add_parser("import", help="csv 가져오기")
     import_parser.add_argument("--from", required=True, dest="from_file")
+    import_parser.add_argument("--rollback-on-error", action="store_true", help="오류 발생 시 전체 롤백")
 
     return parser
 
@@ -168,11 +169,14 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[csv 내보내기 완료] {args.out} ({count} 건)")
 
     if args.command == "import":
-        imported, skipped = service.import_csv(
-            from_file=args.from_file
+        imported, skipped, errors = service.import_csv(
+            from_file=args.from_file,
+            rollback_on_error=args.rollback_on_error,
         )
 
         print(f"[csv 가져오기 완료] imported={imported}, skipped={skipped}")
+        if errors:
+            for err in errors: print(f"[스킵 이유] {err}")
 
 
     return 0

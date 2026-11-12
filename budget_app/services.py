@@ -9,7 +9,7 @@ from typing import Any, Iterator
 from budget_app.decorators import logger
 from budget_app.errors import BudgetAppError
 from budget_app.models import Budget, Transaction
-from budget_app.repositories import BudgetRepository, CategoryRepository, TransactionRepository
+from budget_app.repositories import BudgetRepository, CategoryRepository, TransactionRepository, write_all_jsonl
 from budget_app.validators import parse_tags, validate_amount, validate_category_name, validate_date, validate_month, validate_type
 
 
@@ -262,27 +262,37 @@ class BudgetService:
         return count
 
     @logger
-    def import_csv(self, from_file: Path | str) -> tuple[int, int]:
+    def import_csv(self, from_file: Path | str,  rollback_on_error: bool = False) -> tuple[int, int, list[str]]:
         path = Path(from_file)
         if not path.exists():
             raise BudgetAppError(msg="파일이 존재하지 않습니다.")
 
+        snapshot = [tx.to_dict() for tx in self.transaction_repo.iter_all()]
+        
+        errors = []
         imported = 0
         skipped = 0
-        with path.open("r", encoding="utf-8", newline="") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                try:
-                    self.add_transaction(
-                        raw_date=row["date"],
-                        raw_type=row["type"],
-                        raw_category=row["category"],
-                        raw_amount=row["amount"],
-                        raw_memo=row.get("memo") or "",
-                        raw_tags=row.get("tags") or "",
-                    )
-                    imported += 1
-                except (BudgetAppError, KeyError, TypeError):
-                    skipped += 1
-        return imported, skipped
-
+        try:
+            with path.open("r", encoding="utf-8", newline="") as f:
+                reader = csv.DictReader(f)
+                for line_no, row in enumerate(reader, start=2):
+                    try:
+                        self.add_transaction(
+                            raw_date=row["date"],
+                            raw_type=row["type"],
+                            raw_category=row["category"],
+                            raw_amount=row["amount"],
+                            raw_memo=row.get("memo") or "",
+                            raw_tags=row.get("tags") or "",
+                        )
+                        imported += 1
+                    except (BudgetAppError, KeyError, TypeError) as e:
+                        skipped += 1
+                        errors.append(f"{line_no}행 오류: {e}")
+        except (csv.Error, UnicodeDecodeError):
+            write_all_jsonl(self.transaction_repo.path, iter(snapshot))
+            raise BudgetAppError(msg="파일 상태를 확인해주세요.")
+        if rollback_on_error and skipped > 0:
+            write_all_jsonl(self.transaction_repo.path, iter(snapshot))
+            raise BudgetAppError(msg=f"오류 행({skipped}건)이 발견되어 전체 롤백되었습니다.", hint=" / ".join(errors))
+        return imported, skipped, errors
