@@ -100,8 +100,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[저장 완료] id={tx.id}")
 
     if args.command == "list":
+        found = False
         for tx in service.list_transactions(limit=args.limit):
+            found = True
             print(format_transaction(tx))
+        if not found:
+            print("[데이터 없음]")
 
     if args.command == "delete":
         service.delete_transaction(args.id)
@@ -121,6 +125,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[수정 완료] id={tx.id}")
 
     if args.command == "search":
+        found = False
         for tx in service.search_transactions(
             date_from=args.date_from,
             date_to=args.date_to,
@@ -129,7 +134,10 @@ def main(argv: list[str] | None = None) -> int:
             query=args.q,
             tag=args.tag,
         ):
+            found = True
             print(format_transaction(tx))
+        if not found:
+            print("[데이터 없음]")
 
     if args.command == "summary":
         res = service.get_monthly_summary(raw_month=args.month, top_n=args.top)
